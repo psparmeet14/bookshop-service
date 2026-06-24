@@ -1,0 +1,494 @@
+openapi: 3.0.3
+
+info:
+  title: Bookshop API
+  version: 1.0.0
+  description: |
+    Named-user API for the Bookshop service.
+
+    Every call to `/me/*` is made **on behalf of a specific person** — the authenticated named user.
+    Access is granted via OAuth 2.0 Authorization Code Flow, which allows third-party apps
+    (dashboards, Claude integrations, automations) to act as the user with their permissions and context.
+
+    ## Authentication
+
+    ### Direct login (first-party)
+    Use `POST /auth/login` to get a JWT directly. Suitable for first-party clients (your own frontend).
+
+    ### OAuth 2.0 Authorization Code Flow (third-party apps)
+    1. Redirect user to `GET /oauth/authorize`
+    2. User logs in and approves the requested scopes
+    3. Auth server redirects back with `?code=AUTH_CODE`
+    4. Exchange code for token via `POST /oauth/token`
+    5. Call `/me/*` with `Authorization: Bearer <access_token>`
+
+    ## Scopes
+    | Scope | Access |
+    |-------|--------|
+    | `books:read` | Read the user's personalized book list |
+    | `profile:read` | Read the user's profile |
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: auth
+    description: Named user authentication (direct login)
+  - name: oauth
+    description: OAuth 2.0 Authorization Code Flow
+  - name: me
+    description: Personalized named-user endpoints
+
+# ─────────────────────────────────────────────
+# Security schemes
+# ─────────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by `/auth/login` or `/oauth/token`. Contains `sub` (userId), `username`, and `scope`.
+
+    OAuth2AuthCode:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: http://localhost:8080/oauth/authorize
+          tokenUrl: http://localhost:8080/oauth/token
+          scopes:
+            books:read: Read the user's personalized book list
+            profile:read: Read the user's profile
+
+  # ─────────────────────────────────────────────
+  # Schemas
+  # ─────────────────────────────────────────────
+  schemas:
+
+    # ── Auth ──────────────────────────────────
+
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: secret1234
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          format: password
+          example: secret1234
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Signed JWT. Decode to see `sub`, `username`, `scope`, `exp`.
+          example: eyJhbGciOiJIUzI1NiJ9...
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until the token expires.
+          example: 3600
+        scope:
+          type: string
+          description: Space-separated list of granted scopes.
+          example: books:read profile:read
+
+    # ── User / Profile ─────────────────────────
+
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        username:
+          type: string
+          example: alice
+        _links:
+          $ref: '#/components/schemas/ProfileLinks'
+
+    ProfileLinks:
+      type: object
+      description: HATEOAS links for the profile resource.
+      properties:
+        self:
+          $ref: '#/components/schemas/Link'
+        books:
+          $ref: '#/components/schemas/Link'
+
+    # ── Books ──────────────────────────────────
+
+    BookResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 5de8459e-4403-481e-bbf4-1342a3094623
+        name:
+          type: string
+          example: Clean Code
+        author:
+          type: string
+          example: Robert C. Martin
+        price:
+          type: number
+          format: decimal
+          example: 29.99
+        availableCount:
+          type: integer
+          example: 5
+        _links:
+          $ref: '#/components/schemas/BookLinks'
+
+    BookLinks:
+      type: object
+      description: HATEOAS links for a book resource.
+      properties:
+        self:
+          $ref: '#/components/schemas/Link'
+        catalog:
+          $ref: '#/components/schemas/Link'
+
+    PagedBooksResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookResponse'
+        page:
+          $ref: '#/components/schemas/PageMetadata'
+        _links:
+          $ref: '#/components/schemas/PageLinks'
+
+    PageMetadata:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: Zero-based page number.
+          example: 0
+        size:
+          type: integer
+          example: 10
+        totalElements:
+          type: integer
+          example: 42
+        totalPages:
+          type: integer
+          example: 5
+
+    PageLinks:
+      type: object
+      description: HATEOAS pagination links.
+      properties:
+        self:
+          $ref: '#/components/schemas/Link'
+        first:
+          $ref: '#/components/schemas/Link'
+        prev:
+          $ref: '#/components/schemas/Link'
+        next:
+          $ref: '#/components/schemas/Link'
+        last:
+          $ref: '#/components/schemas/Link'
+
+    # ── Shared ─────────────────────────────────
+
+    Link:
+      type: object
+      properties:
+        href:
+          type: string
+          format: uri
+          example: http://localhost:8080/me/books?page=1&size=10
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 401
+        error:
+          type: string
+          example: Unauthorized
+        message:
+          type: string
+          example: Invalid or expired token.
+
+  # ─────────────────────────────────────────────
+  # Responses (reusable)
+  # ─────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Token valid but scope insufficient.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  # ─────────────────────────────────────────────
+  # Parameters (reusable)
+  # ─────────────────────────────────────────────
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Zero-based page number.
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+    SizeParam:
+      name: size
+      in: query
+      description: Number of items per page.
+      schema:
+        type: integer
+        default: 10
+        minimum: 1
+        maximum: 50
+
+# ─────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────
+paths:
+
+  # ── Named User Auth (direct / first-party) ──
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new named user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '409':
+          description: Username already taken.
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Direct login — returns a JWT for first-party clients
+      description: |
+        Authenticates a named user directly. Use this for your own frontend/CLI.
+        For third-party apps, use the OAuth 2.0 Authorization Code Flow instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid credentials.
+
+  # ── OAuth 2.0 Authorization Code Flow ────────
+
+  /oauth/authorize:
+    get:
+      tags: [oauth]
+      summary: Authorization endpoint — start the OAuth flow
+      description: |
+        The client app redirects the user here. The auth server shows a login + consent screen.
+        After the user approves, it redirects to `redirect_uri?code=AUTH_CODE&state=STATE`.
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+            example: bookshop-dashboard
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+            example: http://localhost:3000/callback
+        - name: scope
+          in: query
+          required: true
+          schema:
+            type: string
+            example: books:read profile:read
+        - name: state
+          in: query
+          required: true
+          description: CSRF protection value — the client must verify this on callback.
+          schema:
+            type: string
+            example: xK9mP2qR
+      responses:
+        '302':
+          description: Redirect to login/consent page, then to redirect_uri with code.
+
+  /oauth/token:
+    post:
+      tags: [oauth]
+      summary: Token endpoint — exchange auth code for access token
+      description: |
+        Called server-side by the client app after receiving the auth code.
+        Returns a JWT bound to the named user who approved the request.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, code, redirect_uri, client_id, client_secret]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code]
+                code:
+                  type: string
+                  description: The auth code received at redirect_uri.
+                redirect_uri:
+                  type: string
+                  format: uri
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+      responses:
+        '200':
+          description: Token issued for the named user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid or expired code.
+        '401':
+          description: Client authentication failed.
+
+  # ── Named-User (Me) Endpoints ─────────────────
+
+  /me/profile:
+    get:
+      tags: [me]
+      summary: Get my profile — who am I
+      description: Returns the profile of the currently authenticated named user.
+      security:
+        - BearerAuth: [profile:read]
+        - OAuth2AuthCode: [profile:read]
+      responses:
+        '200':
+          description: The authenticated user's profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+              example:
+                userId: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                username: alice
+                _links:
+                  self:
+                    href: http://localhost:8080/me/profile
+                  books:
+                    href: http://localhost:8080/me/books
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/books:
+    get:
+      tags: [me]
+      summary: Get my books — personalized named-user book list
+      description: |
+        Returns only the books this named user has been granted access to.
+        Two users calling this endpoint will get different results.
+        Supports pagination via `page` and `size` query params.
+        Response includes HATEOAS links for navigation.
+      security:
+        - BearerAuth: [books:read]
+        - OAuth2AuthCode: [books:read]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Paginated list of books accessible to this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedBooksResponse'
+              example:
+                content:
+                  - id: 5de8459e-4403-481e-bbf4-1342a3094623
+                    name: Clean Code
+                    author: Robert C. Martin
+                    price: 29.99
+                    availableCount: 5
+                    _links:
+                      self:
+                        href: http://localhost:8080/books/5de8459e-4403-481e-bbf4-1342a3094623
+                      catalog:
+                        href: http://localhost:8080/books
+                page:
+                  number: 0
+                  size: 10
+                  totalElements: 2
+                  totalPages: 1
+                _links:
+                  self:
+                    href: http://localhost:8080/me/books?page=0&size=10
+                  first:
+                    href: http://localhost:8080/me/books?page=0&size=10
+                  last:
+                    href: http://localhost:8080/me/books?page=0&size=10
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
